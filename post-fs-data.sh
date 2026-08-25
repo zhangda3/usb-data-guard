@@ -23,17 +23,18 @@
 # write 0 on unlock.
 #=============================================================
 
-# Disable dwc3 controller first (bounded wait: store handler may
-# wait a couple of seconds for USB Low Power Mode entry).
+# Disable dwc3 controller first. dynamic_disable is a write-only sysfs
+# node (DEVICE_ATTR_WO), so we write synchronously with `timeout` (the
+# kernel store handler flushes the OTG state machine before returning).
+# /data may not be mounted yet here, so the state-tracking file write
+# may fail silently - service.sh re-establishes it after boot.
 for _dwc3 in /sys/bus/platform/drivers/msm-dwc3/*/dynamic_disable; do
     [ -f "$_dwc3" ] || continue
-    ( echo 1 > "$_dwc3" ) 2>/dev/null &
-    _i=0
-    while [ "$_i" -lt 20 ]; do
-        [ "$(cat "$_dwc3" 2>/dev/null)" = "1" ] && break
-        sleep 0.1
-        _i=$((_i + 1))
-    done
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 10 sh -c "echo 1 > $_dwc3" 2>/dev/null
+    else
+        echo 1 > "$_dwc3" 2>/dev/null
+    fi
     break
 done
 

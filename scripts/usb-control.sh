@@ -185,6 +185,10 @@ _get_saved_udc() {
 #==========================================================
 
 DWC3_DISABLE_NODE=""
+# dynamic_disable is DEVICE_ATTR_WO (write-only, no show function),
+# so it CANNOT be read back with cat. We track the intended state
+# in this file instead. (Set/cleared by _dwc3_set.)
+DWC3_STATE_FILE="/data/adb/usb_data_guard.dwc3state"
 
 find_dwc3_node() {
     if [ -n "$DWC3_DISABLE_NODE" ] && [ -f "$DWC3_DISABLE_NODE" ]; then
@@ -200,27 +204,32 @@ find_dwc3_node() {
 }
 
 dwc3_is_disabled() {
-    find_dwc3_node || return 1
-    [ "$(cat "$DWC3_DISABLE_NODE" 2>/dev/null)" = "1" ]
+    # dynamic_disable sysfs node is write-only, so read OUR state file.
+    [ -f "$DWC3_STATE_FILE" ] || return 1
+    [ "$(cat "$DWC3_STATE_FILE" 2>/dev/null)" = "1" ]
 }
 
 _dwc3_set() {
     # $1 = 1 (disable controller) or 0 (re-enable)
     find_dwc3_node || return 1
-    local val="$1" cur i
-    cur=$(cat "$DWC3_DISABLE_NODE" 2>/dev/null)
-    [ "$cur" = "$val" ] && return 0
-    # The kernel store handler waits for USB Low Power Mode entry,
-    # which can take a few seconds. Write from a background subshell
-    # and poll the node value instead of blocking the caller.
-    ( echo "$val" > "$DWC3_DISABLE_NODE" ) 2>/dev/null &
-    i=0
-    while [ "$i" -lt 80 ]; do    # up to ~8s
-        sleep 0.1
-        [ "$(cat "$DWC3_DISABLE_NODE" 2>/dev/null)" = "$val" ] && return 0
-        i=$((i + 1))
-    done
-    return 1
+    local val="$1"
+    # Write SYNCHRONOUSLY. The kernel store handler (dwc3-msm-core.c
+    # dynamic_disable_store) flushes the OTG state-machine work before
+    # returning, so once echo returns the controller has fully
+    # transitioned (LPM on disable; runtime-PM re-enabled + state
+    # re-evaluated on enable). A background subshell would race with
+    # the UDC rebind that follows on unlock and lose the write.
+    # Use `timeout` so a stuck store handler can't hang the monitor.
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 10 sh -c "echo $val > $DWC3_DISABLE_NODE" 2>/dev/null
+        local rc=$?
+        [ "$rc" -ne 0 ] && { log_error "dynamic_disable write $val failed (rc=$rc)"; return 1; }
+    else
+        echo "$val" > "$DWC3_DISABLE_NODE" 2>/dev/null || { log_error "dynamic_disable write $val failed"; return 1; }
+    fi
+    echo "$val" > "$DWC3_STATE_FILE" 2>/dev/null
+    log_debug "dynamic_disable <- $val"
+    return 0
 }
 
 _harden_udc_files() {
@@ -247,7 +256,7 @@ _block_dwc3() {
         if _dwc3_set 1; then
             log_msg "DWC3 controller disabled at kernel level"
         else
-            log_error "dynamic_disable write failed/timed out - relying on UDC unbind only"
+            log_error "dynamic_disable=1 failed - relying on UDC unbind only"
         fi
     else
         log_error "msm-dwc3 dynamic_disable node not found - UDC-only mode"
@@ -257,15 +266,32 @@ _block_dwc3() {
 }
 
 _enable_dwc3() {
+    # Order matters: restore write perms -> re-enable controller
+    # (synchronous, kernel flushes sm_work) -> settle -> re-bind UDC
+    # -> verify, retry once if the gadget did not attach.
     _restore_udc_perms
     if find_dwc3_node; then
         if _dwc3_set 0; then
-            log_debug "DWC3 controller re-enabled"
+            log_msg "DWC3 controller re-enabled, restoring gadget"
+            # The kernel store handler flushed the state machine, but
+            # give runtime PM a brief moment to propagate the resume.
+            sleep 0.5
         else
-            log_error "dynamic_disable re-enable failed (controller still off)"
+            log_error "dynamic_disable=0 failed - controller may stay off, trying rebind anyway"
         fi
     fi
     _enable_udc_all
+    # Verify the gadget actually re-attached; retry once.
+    if is_usb_blocked; then
+        log_msg "USB still blocked after first rebind - retrying"
+        sleep 0.5
+        _enable_udc_all
+    fi
+    if is_usb_blocked; then
+        log_error "USB data restore FAILED - gadget did not re-bind"
+    else
+        log_debug "USB data restored (gadget re-bound)"
+    fi
 }
 
 #==========================================================

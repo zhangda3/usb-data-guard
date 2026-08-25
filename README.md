@@ -2,6 +2,17 @@
 
 ## 版本历史
 
+### v1.0.5
+- **修复解锁后 USB 数据无法恢复（关键）**：v1.0.4 屏蔽生效但解锁后一直屏蔽。根因经内核源码（`dwc3-msm-core.c:5474`）确认——`dynamic_disable` 是 `DEVICE_ATTR_WO`（**只写属性，无 show 函数，`cat` 读不到值**）。v1.0.4 的三个连锁错误：
+  1. `cat dynamic_disable` 永远返回空 → `dwc3_is_disabled()` 恒为 false、`_dwc3_set()` 轮询 cat 8 秒必超时
+  2. `echo 0` 在**后台子 shell** 执行，主进程没等写完成就立刻重绑 UDC → 此时内核 store 处理函数还在 `flush_work` 重启控制器 → 重绑写入丢失 → gadget 永不附加
+  3. 锁定态每 0.3 秒的 `verify` 都因 cat 读不到而反复 `echo 1`，堆积后台子 shell
+- 修复方案（三层）：
+  - **状态文件跟踪**：`dynamic_disable` 无法读回，改用 `/data/adb/usb_data_guard.dwc3state` 记录预期状态（"1"/"0"），`dwc3_is_disabled()` 读它，轻量可靠。
+  - **同步写入**：`echo` 直接写入（不再后台化）。内核 store 处理函数本身会 `flush_work(&sm_work)` 后才返回，所以 echo 返回即代表控制器状态已完全切换。用 `timeout 10` 包裹防止极端情况下内核 store 卡死拖垮监控循环。
+  - **解锁顺序**：恢复权限 → 同步写 `0` → `sleep 0.5` 让 runtime PM 传播 → 重绑 UDC → `is_usb_blocked` 验证，失败则 0.5 秒后重绑一次。源码已确认写 `0` 的恢复路径完整（清标志 + `pm_runtime_disable/set_suspended/enable` + `dwc3_ext_event_notify` 重评状态机）。
+- `post-fs-data.sh` / `uninstall.sh` 同步写入改造（卸载时清理 dwc3 状态文件）。
+
 ### v1.0.4
 - **内核级屏蔽（关键升级，基于 SM7675 内核源码研究）**：纯用户态 UDC 解绑永远在和 ColorOS USB HAL 对抗（HAL 通过 dwc3 gadget 的 runtime PM 路径随时可复活数据连接）。本版本改用高通 `msm-dwc3` 驱动自带的官方开关：
   - 节点：`/sys/bus/platform/drivers/msm-dwc3/<dev>/dynamic_disable`（源码位置 `drivers/usb/dwc3/dwc3-msm-core.c`）

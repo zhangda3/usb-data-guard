@@ -22,9 +22,14 @@ done
 
 for _dwc3 in /sys/bus/platform/drivers/msm-dwc3/*/dynamic_disable; do
     [ -f "$_dwc3" ] || continue
-    echo 0 > "$_dwc3" 2>/dev/null
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 10 sh -c "echo 0 > $_dwc3" 2>/dev/null
+    else
+        echo 0 > "$_dwc3" 2>/dev/null
+    fi
     break
 done
+rm -f /data/adb/usb_data_guard.dwc3state 2>/dev/null
 
 # Restore saved gadget bindings first (if state file exists)
 _STATE="/data/adb/usb_data_guard.usbstate"

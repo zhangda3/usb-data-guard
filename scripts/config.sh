@@ -26,6 +26,8 @@ USB_STATE_FILE=/data/adb/usb_data_guard.usbstate
 #                  RECOMMENDED on OnePlus/Qualcomm: verified against the
 #                  SM7675 kernel source. The kernel REJECTS the USB HAL's
 #                  re-enable attempts while disabled.
+#                  (dynamic_disable is a write-only sysfs node; the module
+#                  tracks state in /data/adb/usb_data_guard.dwc3state.)
 #   "udc"        - Unbind USB gadget from UDC controller only (userspace
 #                  level; ColorOS HAL keeps re-binding - NOT reliable)
 #   "functions"  - Remove data functions only (ineffective on ColorOS)
