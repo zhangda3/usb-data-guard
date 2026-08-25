@@ -1,0 +1,6 @@
+id=usb_data_guard
+name=USB Data Guard
+version=v1.0.4
+versionCode=5
+author=KernelSU-Tools
+description=锁屏/BFU状态下自动屏蔽USB数据传输，解锁后自动恢复。充电功能不受影响。v1.0.4: 通过高通msm-dwc3内核驱动dynamic_disable节点在内核层关闭USB控制器，内核会拒绝USB HAL的重新启用请求，彻底解决锁定状态数据被恢复的问题。
