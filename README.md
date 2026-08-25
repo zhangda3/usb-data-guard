@@ -1,4 +1,4 @@
-# USB Data Guard - KernelSU Module
+# USB Data Guard - KernelSU Module--实现部分GrapheneOS的功能
 
 ## 版本历史
 
