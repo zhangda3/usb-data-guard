@@ -163,3 +163,4 @@ adb shell cat /data/adb/usb_data_guard.log
 - Android 12+ (tested on Android 14/16)
 - 需要 configfs USB gadget 支持（现代设备均支持）
 - 已测试：OnePlus PJF110 / Kernel 6.1.161
+- 别的手机可以查询自己手机对应芯片的内核然后据此修改即可，内核源码命名方式通常为android_kernel_手机品牌名称-手机处理器芯片型号_u_14.0.1_手机品牌名称_手机型号，据此在GitHub或者Google搜索即可，如android_kernel_oneplus_sm7675-oneplus-sm7675_u_14.0.1_oneplus_ace3v
